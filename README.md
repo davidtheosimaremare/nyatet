@@ -100,12 +100,23 @@ pm2 startup
 
 ## 💬 Contoh Penggunaan di Telegram
 
-1. **Teks**:
-   - `beli kopi kenangan 28rb`
-   - `isi bensin vario 45k`
-   - `makan siang warteg 25.000 bayar qris`
-2. **Foto**:
-   - Kirimkan foto struk belanjaan Indomaret / Alfamart / bon restoran / screenshot transfer.
-3. **Voice Note**:
-   - Tahan tombol mic Telegram dan rekam suara seperti biasa:
-     *"Tadi beli martabak manis tiga puluh lima ribu"*
+### 1. Mencatat Pengeluaran
+- **Teks**: `beli kopi kenangan 28rb` atau `isi bensin 45k bayar qris`
+- **Foto**: Kirimkan foto struk belanjaan Indomaret / Alfamart / bon restoran / struk QRIS.
+- **Voice Note**: Tahan mic Telegram dan bicara santai: *"Tadi beli martabak manis tiga puluh lima ribu"*.
+
+### 2. Melihat Laporan & Rekap Keuangan
+- `/rekap` : Membuka dashboard laporan interaktif (bisa klik tombol Hari Ini, 7 Hari, Bulan Ini, Tahun Ini).
+- `/hari` : Melihat total dan rincian pengeluaran hari ini.
+- `/minggu` : Melihat rekap 7 hari terakhir.
+- `/bulan` : Melihat rekap bulan ini beserta breakdown per kategori.
+- `/tahun` : Melihat total pengeluaran tahun berjalan.
+
+### 3. Analisa Mendalam (Deep Financial Analysis)
+- `/analisa` : Meminta Sumopod AI menganalisis kebiasaan belanja, deteksi kebocoran finansial (latte factor), titik rawan, rekomendasi aksi hemat konkret, dan skor kesehatan finansial.
+- Kamu juga bisa menyertakan periode: `/analisa minggu` atau `/analisa tahun`.
+
+### 4. Edit & Hapus Transaksi Tertentu
+- `/list` : Menampilkan daftar transaksi terakhir lengkap dengan nomor baris `[#...]`.
+- `/hapus <nomor_baris>` : Menghapus baris transaksi dari Google Sheet (contoh: `/hapus 8`).
+- `/edit <nomor_baris> <perubahan>` : Mengubah data transaksi dengan bantuan AI (contoh: `/edit 8 ganti nominal jadi 35rb bayar bca`).
