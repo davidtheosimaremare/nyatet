@@ -1,0 +1,26 @@
+{
+  "name": "nyatet",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "telegram",
+    "expense-tracker",
+    "gemini",
+    "google-sheets"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^2.31.0",
+    "dotenv": "^18.0.9",
+    "googleapis": "^188.0.0",
+    "grammy": "^1.46.0",
+    "openai": "^7.43.0"
+  }
+}
