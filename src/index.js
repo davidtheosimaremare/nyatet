@@ -24,15 +24,45 @@ if (!config.telegramToken) {
 const bot = new Bot(config.telegramToken);
 
 /**
+ * Helper reply aman: jika ada simbol Markdown bentrok/unclosed entity, fallback tanpa parse_mode
+ */
+async function safeReply(ctx, text, extra = {}) {
+  const content = text != null ? String(text) : '(Pesan kosong)';
+  try {
+    return await ctx.reply(content, { parse_mode: 'Markdown', ...extra });
+  } catch (err) {
+    if (err.message && (err.message.includes("can't parse entities") || err.message.includes('Bad Request'))) {
+      return await ctx.reply(content, { ...extra, parse_mode: undefined });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Helper editMessageText aman
+ */
+async function safeEditMessageText(ctx, chatId, messageId, text, extra = {}) {
+  const content = text != null ? String(text) : '(Pesan kosong)';
+  try {
+    return await ctx.api.editMessageText(chatId, messageId, content, { parse_mode: 'Markdown', ...extra });
+  } catch (err) {
+    if (err.message && (err.message.includes("can't parse entities") || err.message.includes('Bad Request'))) {
+      return await ctx.api.editMessageText(chatId, messageId, content, { ...extra, parse_mode: undefined });
+    }
+    throw err;
+  }
+}
+
+/**
  * Middleware untuk membatasi akses hanya untuk user yang diizinkan (opsional)
  */
 bot.use(async (ctx, next) => {
   const userId = String(ctx.from?.id);
   if (config.allowedUserIds.length > 0 && !config.allowedUserIds.includes(userId)) {
     console.warn(`[AKSES DITOLAK] User ID tidak diizinkan: ${userId} (${ctx.from?.username || 'no username'})`);
-    return ctx.reply(
-      `⛔ Maaf, bot ini diset khusus untuk pemilik.\n\nUser ID kamu: \`${userId}\`\nTambahkan ID ini ke \`ALLOWED_TELEGRAM_USER_IDS\` di file .env server kamu jika ini adalah bot milikmu.`,
-      { parse_mode: 'Markdown' }
+    return safeReply(
+      ctx,
+      `⛔ Maaf, bot ini diset khusus untuk pemilik.\n\nUser ID kamu: \`${userId}\`\nTambahkan ID ini ke \`ALLOWED_TELEGRAM_USER_IDS\` di file .env server kamu jika ini adalah bot milikmu.`
     );
   }
   await next();
@@ -68,15 +98,14 @@ async function sendPeriodReport(ctx, period = 'bulan', isEdit = false) {
           parse_mode: 'Markdown',
         });
       } catch (err) {
-        if (!err.message?.includes('message is not modified')) {
+        if (err.message && (err.message.includes("can't parse entities") || err.message.includes('Bad Request'))) {
+          await ctx.editMessageText(text, { reply_markup: keyboard });
+        } else if (!err.message?.includes('message is not modified')) {
           throw err;
         }
       }
     } else {
-      await ctx.reply(text, {
-        reply_markup: keyboard,
-        parse_mode: 'Markdown',
-      });
+      await safeReply(ctx, text, { reply_markup: keyboard });
     }
   } catch (error) {
     console.error(`Error saat mengambil rekap ${period}:`, error);
@@ -89,9 +118,9 @@ async function sendPeriodReport(ctx, period = 'bulan', isEdit = false) {
  */
 async function runDeepAnalysis(ctx, period = 'bulan') {
   await ctx.replyWithChatAction('typing');
-  const waitMsg = await ctx.reply(
-    '🧠 *Sedang melakukan analisa finansial mendalam dengan Sumopod AI...*\n_Membedah pola belanja, rasio pengeluaran, dan potensi kebocoran finansial..._',
-    { parse_mode: 'Markdown' }
+  const waitMsg = await safeReply(
+    ctx,
+    '🧠 *Sedang melakukan analisa finansial mendalam dengan Sumopod AI...*\n_Membedah pola belanja, rasio pengeluaran, dan potensi kebocoran finansial..._'
   );
 
   try {
@@ -100,11 +129,11 @@ async function runDeepAnalysis(ctx, period = 'bulan') {
     const stats = calculateExpenseStats(filtered.data);
 
     if (stats.count === 0) {
-      return ctx.api.editMessageText(
+      return safeEditMessageText(
+        ctx,
         ctx.chat.id,
         waitMsg.message_id,
-        `ℹ️ Belum ada transaksi tercatat untuk periode *${filtered.periodName}*. Silakan catat pengeluaran terlebih dahulu agar bisa dianalisa.`,
-        { parse_mode: 'Markdown' }
+        `ℹ️ Belum ada transaksi tercatat untuk periode *${filtered.periodName}*. Silakan catat pengeluaran terlebih dahulu agar bisa dianalisa.`
       );
     }
 
@@ -119,11 +148,11 @@ async function runDeepAnalysis(ctx, period = 'bulan') {
       `💰 *Total Pengeluaran*: ${formatRupiah(stats.total)} (${stats.count} transaksi)\n\n` +
       `${analysisResult}`;
 
-    await ctx.api.editMessageText(
+    await safeEditMessageText(
+      ctx,
       ctx.chat.id,
       waitMsg.message_id,
-      fullResponse,
-      { parse_mode: 'Markdown' }
+      fullResponse
     );
   } catch (error) {
     console.error('Error saat deep analysis:', error);
@@ -183,10 +212,10 @@ async function handleAgentDecision(ctx, decision, inputType, originalPrompt = ''
     }
 
     if (decision.reply) {
-      replyText += `💬 _${decision.reply}_\n`;
+      replyText += `💬 ${decision.reply}\n`;
     }
 
-    await ctx.reply(replyText, { parse_mode: 'Markdown' });
+    await safeReply(ctx, replyText);
     conversationManager.addMessage(userId, 'assistant', replyText);
     return;
   }
@@ -216,7 +245,7 @@ async function handleAgentDecision(ctx, decision, inputType, originalPrompt = ''
         `• Kategori: ${decision.edit.kategori || existingItem.kategori}`;
     }
 
-    await ctx.reply(editReply, { parse_mode: 'Markdown' });
+    await safeReply(ctx, editReply);
     conversationManager.addMessage(userId, 'assistant', editReply);
     return;
   }
@@ -233,14 +262,14 @@ async function handleAgentDecision(ctx, decision, inputType, originalPrompt = ''
         `• ${itemToDelete.keterangan} (${formatRupiah(itemToDelete.nominal)})`;
     }
 
-    await ctx.reply(delReply, { parse_mode: 'Markdown' });
+    await safeReply(ctx, delReply);
     conversationManager.addMessage(userId, 'assistant', delReply);
     return;
   }
 
   // 4. INTENT: CHAT_QUERY (Tanya jawab, diskusi keuangan, analisa, saran)
   const chatReply = decision.reply || 'Saya telah memahami pesanmu. Ada yang ingin kamu diskusikan lagi seputar keuanganmu?';
-  await ctx.reply(chatReply, { parse_mode: 'Markdown' });
+  await safeReply(ctx, chatReply);
   conversationManager.addMessage(userId, 'assistant', chatReply);
 }
 
@@ -266,7 +295,7 @@ bot.command('start', async (ctx) => {
     `• /reset : Reset memori sesi percakapan\n\n` +
     `Ketik /help untuk panduan lengkap.`;
 
-  await ctx.reply(text, { parse_mode: 'Markdown' });
+  await safeReply(ctx, text);
 });
 
 // Command: /help
@@ -291,7 +320,7 @@ bot.command('help', async (ctx) => {
     `• /edit \`<no> <perubahan>\` : Edit baris transaksi\n` +
     `• /reset : Mulai percakapan baru (bersihkan memori sesi)`;
 
-  await ctx.reply(text, { parse_mode: 'Markdown' });
+  await safeReply(ctx, text);
 });
 
 // Command: /reset
@@ -375,7 +404,7 @@ bot.command('list', async (ctx) => {
     text += `💡 *Untuk Hapus*: ketik \`/hapus <no_baris>\` atau minta langsung di chat (misal: *"hapus baris ${recent[0]?.rowIndex}"*)\n`;
     text += `💡 *Untuk Edit*: ketik \`/edit <no_baris> <perubahan>\` atau minta di chat`;
 
-    await ctx.reply(text, { parse_mode: 'Markdown' });
+    await safeReply(ctx, text);
   } catch (error) {
     console.error('Error saat list transaksi:', error);
     await ctx.reply(`⚠️ Gagal mengambil daftar transaksi: ${error.message}`);
@@ -388,12 +417,12 @@ bot.command('hapus', async (ctx) => {
   const rowIndex = parseInt(parts[1]);
 
   if (!rowIndex || isNaN(rowIndex) || rowIndex < 2) {
-    return ctx.reply(
+    return safeReply(
+      ctx,
       'ℹ️ *Cara Menghapus Transaksi*:\n' +
       'Gunakan format: `/hapus <nomor_baris>`\n\n' +
       'Contoh: `/hapus 5`\n' +
-      '*(Ketik /list untuk melihat nomor baris [#...])*\n',
-      { parse_mode: 'Markdown' }
+      '*(Ketik /list untuk melihat nomor baris [#...])*\n'
     );
   }
 
@@ -410,7 +439,7 @@ bot.command('hapus', async (ctx) => {
       `• *Kategori*: ${itemToDelete.kategori}\n\n` +
       `_Baris telah dibersihkan langsung dari Google Sheet._`;
 
-    await ctx.reply(reply, { parse_mode: 'Markdown' });
+    await safeReply(ctx, reply);
   } catch (error) {
     console.error('Error saat hapus transaksi:', error);
     await ctx.reply(`⚠️ Gagal menghapus transaksi baris #${rowIndex}: ${error.message}`);
@@ -423,14 +452,14 @@ bot.command('edit', async (ctx) => {
   const match = text.match(/^\/edit\s+(\d+)\s+(.+)$/i);
 
   if (!match) {
-    return ctx.reply(
+    return safeReply(
+      ctx,
       'ℹ️ *Cara Mengedit Transaksi*:\n' +
       'Gunakan format: `/edit <nomor_baris> <instruksi perubahan>`\n\n' +
       'Contoh:\n' +
       '• `/edit 5 harusnya nominal 35rb`\n' +
       '• `/edit 5 ganti keterangan makan bakso bayar tunai`\n\n' +
-      '*(Ketik /list untuk melihat nomor baris transaksi)*',
-      { parse_mode: 'Markdown' }
+      '*(Ketik /list untuk melihat nomor baris transaksi)*'
     );
   }
 
@@ -464,7 +493,7 @@ bot.command('edit', async (ctx) => {
 
 // Command: /myid
 bot.command('myid', async (ctx) => {
-  await ctx.reply(`ID Telegram kamu: \`${ctx.from?.id}\``, { parse_mode: 'Markdown' });
+  await safeReply(ctx, `ID Telegram kamu: \`${ctx.from?.id}\``);
 });
 
 // Command: /ping
@@ -562,7 +591,7 @@ bot.on('message:document', async (ctx) => {
 bot.on(['message:voice', 'message:audio'], async (ctx) => {
   try {
     await ctx.replyWithChatAction('record_voice');
-    const waitMsg = await ctx.reply('🎧 _Mendengarkan voice note kamu..._', { parse_mode: 'Markdown' });
+    const waitMsg = await safeReply(ctx, '🎧 _Mendengarkan voice note kamu..._');
 
     const audioObj = ctx.message.voice || ctx.message.audio;
     const mimeType = audioObj.mime_type || 'audio/ogg';
@@ -585,11 +614,11 @@ bot.on(['message:voice', 'message:audio'], async (ctx) => {
     }
 
     // Tampilkan transkrip kepada user agar user tahu suara terdengar akurat
-    await ctx.api.editMessageText(
+    await safeEditMessageText(
+      ctx,
       ctx.chat.id,
       waitMsg.message_id,
-      `🎙️ *Kamu berkata*: _"${transcript}"_\n_Sedang diproses..._`,
-      { parse_mode: 'Markdown' }
+      `🎙️ *Kamu berkata*: "${transcript}"\n_Sedang diproses..._`
     );
 
     // 2. Kirim transkrip ke AI Agent bersama konteks data keuangan
