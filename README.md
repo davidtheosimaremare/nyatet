@@ -63,6 +63,7 @@ Aplikasi bot Telegram cerdas berbasis **Node.js** yang mencatat pengeluaran keua
    SUMOPOD_API_KEY=sk-sumopod_api_key_kamu
    SUMOPOD_BASE_URL=https://ai.sumopod.com/v1
    SUMOPOD_MODEL=gpt-4o-mini
+   GROQ_API_KEY=gsk_groq_api_key_kamu  # Untuk transkripsi Voice Note cepat & gratis
    GOOGLE_SPREADSHEET_ID=spreadsheet_id_kamu
    GOOGLE_SHEET_NAME=Pengeluaran
    GOOGLE_SERVICE_ACCOUNT_KEY_FILE=./service-account.json
