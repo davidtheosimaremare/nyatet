@@ -36,6 +36,26 @@ export function getCurrentTimeWIB() {
   return new Intl.DateTimeFormat('id-ID', options).format(d);
 }
 /**
+ * Mendeteksi tipe MIME gambar berdasarkan magic bytes atau ekstensi file
+ * @param {string} filePath 
+ * @param {Buffer} buffer 
+ * @returns {string}
+ */
+export function detectImageMimeType(filePath = '', buffer = null) {
+  if (buffer && buffer.length > 4) {
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) return 'image/webp';
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  }
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+/**
  * Mendapatkan tanggal beberapa hari yang lalu dalam format YYYY-MM-DD (WIB)
  * @param {number} days
  * @returns {string}

@@ -10,6 +10,7 @@ import {
   formatReportText,
   buildFinancialContext,
   conversationManager,
+  detectImageMimeType,
 } from './utils/helpers.js';
 
 // Validasi environment saat startup
@@ -498,21 +499,23 @@ bot.on('message:text', async (ctx) => {
   }
 });
 
-// Handler: Foto (Struk / Bukti Bayar / Foto Barang & Tanya Jawab)
-bot.on('message:photo', async (ctx) => {
+/**
+ * Helper untuk memproses input gambar (baik dari photo terkompresi maupun document file)
+ */
+async function processImageMessage(ctx, fileId, caption = '') {
   try {
     await ctx.replyWithChatAction('typing');
-    await ctx.reply('🔎 Membaca dan menganalisis gambar dengan Sumopod AI...');
+    const statusMsg = await ctx.reply('🔎 Membaca dan menganalisis struk/gambar dengan Sumopod AI...');
 
-    const photo = ctx.message.photo[ctx.message.photo.length - 1];
-    const file = await ctx.api.getFile(photo.file_id);
-
+    const file = await ctx.api.getFile(fileId);
     const fileUrl = `https://api.telegram.org/file/bot${config.telegramToken}/${file.file_path}`;
     const response = await fetch(fileUrl);
     const arrayBuffer = await response.arrayBuffer();
-    const base64Data = Buffer.from(arrayBuffer).toString('base64');
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Data = buffer.toString('base64');
 
-    const caption = ctx.message.caption || '';
+    // Deteksi tipe MIME yang valid (jpeg, png, webp, gif)
+    const mimeType = detectImageMimeType(file.file_path || '', buffer);
 
     // Ambil konteks finansial terkini
     const allExpenses = await sheetsService.getAllExpenses();
@@ -521,16 +524,37 @@ bot.on('message:photo', async (ctx) => {
 
     const decision = await sumopodService.chatWithImage({
       base64Data,
-      mimeType: 'image/jpeg',
+      mimeType,
       caption,
       financialContext,
       history,
     });
 
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
+    } catch (_) {}
+
     await handleAgentDecision(ctx, decision, 'Foto', caption || '[Kirim Foto]');
   } catch (error) {
     console.error('Error saat memproses foto:', error);
     await ctx.reply(`⚠️ Gagal menganalisis gambar: ${error.message}`);
+  }
+}
+
+// Handler: Foto (Struk / Bukti Bayar / Foto Barang)
+bot.on('message:photo', async (ctx) => {
+  const photo = ctx.message.photo[ctx.message.photo.length - 1];
+  await processImageMessage(ctx, photo.file_id, ctx.message.caption || '');
+});
+
+// Handler: Dokumen Gambar (Bila user mengirim foto sebagai File tanpa kompresi)
+bot.on('message:document', async (ctx) => {
+  const doc = ctx.message.document;
+  const isImage = (doc.mime_type && doc.mime_type.startsWith('image/')) ||
+    /\.(jpe?g|png|webp|gif)$/i.test(doc.file_name || '');
+
+  if (isImage) {
+    await processImageMessage(ctx, doc.file_id, ctx.message.caption || '');
   }
 });
 

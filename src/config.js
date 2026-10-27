@@ -5,6 +5,8 @@ export const config = {
   sumopodApiKey: process.env.SUMOPOD_API_KEY || '',
   sumopodBaseUrl: process.env.SUMOPOD_BASE_URL || 'https://ai.sumopod.com/v1',
   sumopodModel: process.env.SUMOPOD_MODEL || 'gpt-4o-mini',
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  groqApiKey: process.env.GROQ_API_KEY || '',
   spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || '',
   sheetName: process.env.GOOGLE_SHEET_NAME || 'Pengeluaran',
   serviceAccountKeyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || './service-account.json',

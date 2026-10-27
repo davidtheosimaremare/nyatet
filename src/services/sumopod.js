@@ -184,12 +184,60 @@ Balas HANYA dengan JSON valid persis dengan struktur berikut:
   }
 
   /**
-   * Transkripsi audio / voice note menggunakan model Whisper
+   * Transkripsi audio / voice note
+   * Mendukung Google Gemini (gratis) atau Groq Whisper (gratis) jika Sumopod tidak memiliki endpoint audio
    * @param {string} base64Data
    * @param {string} mimeType
    * @returns {Promise<string>}
    */
   async transcribeAudio(base64Data, mimeType = 'audio/ogg') {
+    // 1. Opsi Transkripsi dengan Google Gemini API (gratis & native audio)
+    if (config.geminiApiKey) {
+      try {
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: 'Transkripsikan rekaman suara ini secara akurat kata demi kata dalam Bahasa Indonesia. Balas HANYA teks transkripsi tanpa basa-basi pembuka atau penutup.' },
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+              ],
+            },
+          ],
+        });
+        const text = response.text?.trim() || '';
+        if (text) return text;
+      } catch (err) {
+        console.error('Peringatan: Gagal transkripsi via Gemini:', err.message);
+      }
+    }
+
+    // 2. Opsi Transkripsi dengan Groq Whisper API (gratis & cepat)
+    if (config.groqApiKey) {
+      try {
+        const buffer = Buffer.from(base64Data, 'base64');
+        const file = await toFile(buffer, 'voice.ogg', { type: mimeType });
+        const groq = new OpenAI({ apiKey: config.groqApiKey, baseURL: 'https://api.groq.com/openai/v1' });
+        const res = await groq.audio.transcriptions.create({
+          file,
+          model: 'whisper-large-v3-turbo',
+        });
+        const text = res?.text?.trim() || '';
+        if (text) return text;
+      } catch (err) {
+        console.error('Peringatan: Gagal transkripsi via Groq:', err.message);
+      }
+    }
+
+    // 3. Fallback mencoba Sumopod (akan error jika Sumopod belum menyediakan endpoint audio)
     try {
       const buffer = Buffer.from(base64Data, 'base64');
       const file = await toFile(buffer, 'voice.ogg', { type: mimeType });
@@ -203,7 +251,7 @@ Balas HANYA dengan JSON valid persis dengan struktur berikut:
     } catch (error) {
       console.error('Error saat transkripsi audio di Sumopod:', error.message);
       throw new Error(
-        `Gagal mentranskripsi suara: ${error.message}. Pastikan model Whisper tersedia di Sumopod atau gunakan pesan teks/foto struk.`
+        'Server Sumopod AI saat ini belum memiliki fitur transkripsi suara (Whisper). Agar fitur Voice Note aktif, tambahkan GEMINI_API_KEY (gratis di aistudio.google.com) atau GROQ_API_KEY (gratis di console.groq.com) ke file .env kamu.'
       );
     }
   }
