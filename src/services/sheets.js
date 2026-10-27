@@ -14,29 +14,43 @@ export class SheetsService {
   _getAuth() {
     if (this.auth) return this.auth;
 
-    if (config.serviceAccountJson) {
+    // Cek apakah ada raw JSON (bisa di config.serviceAccountJson atau jika user memasukkannya di config.serviceAccountKeyFile)
+    let rawJson = config.serviceAccountJson;
+    if (!rawJson && typeof config.serviceAccountKeyFile === 'string' && config.serviceAccountKeyFile.trim().startsWith('{')) {
+      rawJson = config.serviceAccountKeyFile;
+    }
+
+    if (rawJson) {
       try {
-        const credentials = JSON.parse(config.serviceAccountJson);
+        let cleanJson = rawJson.trim();
+        // Handle jika terbungkus tanda kutip ganda dari environment variable
+        if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
+          cleanJson = cleanJson.slice(1, -1).replace(/\\"/g, '"');
+        }
+        const credentials = JSON.parse(cleanJson);
         this.auth = new google.auth.GoogleAuth({
           credentials,
           scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
+        this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+        return this.auth;
       } catch (err) {
-        throw new Error(`Gagal parse GOOGLE_SERVICE_ACCOUNT_JSON: ${err.message}`);
+        throw new Error(`Gagal membaca JSON Service Account: ${err.message}`);
       }
-    } else if (config.serviceAccountKeyFile && fs.existsSync(config.serviceAccountKeyFile)) {
+    }
+
+    if (config.serviceAccountKeyFile && fs.existsSync(config.serviceAccountKeyFile)) {
       this.auth = new google.auth.GoogleAuth({
         keyFile: config.serviceAccountKeyFile,
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
       });
-    } else {
-      throw new Error(
-        `File kredensial Service Account tidak ditemukan di: ${config.serviceAccountKeyFile}. Pastikan file sudah ada atau set GOOGLE_SERVICE_ACCOUNT_JSON.`
-      );
+      this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+      return this.auth;
     }
 
-    this.sheets = google.sheets({ version: 'v4', auth: this.auth });
-    return this.auth;
+    throw new Error(
+      `Kredensial Service Account tidak ditemukan. Pastikan variabel GOOGLE_SERVICE_ACCOUNT_JSON diisi isi file JSON atau GOOGLE_SERVICE_ACCOUNT_KEY_FILE mengarah ke file .json yang ada.`
+    );
   }
 
   /**
