@@ -8,6 +8,8 @@ import {
   filterExpensesByPeriod,
   calculateExpenseStats,
   formatReportText,
+  buildFinancialContext,
+  conversationManager,
 } from './utils/helpers.js';
 
 // Validasi environment saat startup
@@ -132,26 +134,135 @@ async function runDeepAnalysis(ctx, period = 'bulan') {
   }
 }
 
+/**
+ * Handler utama untuk memproses hasil keputusan Agent AI
+ */
+async function handleAgentDecision(ctx, decision, inputType, originalPrompt = '') {
+  const userId = ctx.from?.id;
+  const userIdentifier = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'User');
+  const currentTime = getCurrentTimeWIB();
+
+  // Simpan riwayat input user ke memori percakapan
+  if (originalPrompt) {
+    conversationManager.addMessage(userId, 'user', originalPrompt);
+  }
+
+  // 1. INTENT: RECORD_EXPENSE
+  if (decision.intent === 'RECORD_EXPENSE' && decision.expenses && decision.expenses.length > 0) {
+    const rowsToAppend = decision.expenses.map((item) => [
+      item.tanggal,
+      currentTime,
+      item.nominal,
+      item.kategori || 'Lain-lain',
+      item.keterangan || '-',
+      item.catatan_tambahan || '',
+      inputType,
+      userIdentifier,
+    ]);
+
+    await sheetsService.appendExpenses(rowsToAppend);
+
+    let replyText = `✅ *Berhasil Dicatat ke Google Sheet!*\n\n`;
+    let total = 0;
+
+    decision.expenses.forEach((item, index) => {
+      total += Number(item.nominal) || 0;
+      replyText += `*${index + 1}. ${item.keterangan}*\n`;
+      replyText += `   💰 Nominal: *${formatRupiah(item.nominal)}*\n`;
+      replyText += `   🏷️ Kategori: ${item.kategori}\n`;
+      replyText += `   📅 Tanggal: ${item.tanggal}\n`;
+      if (item.catatan_tambahan) {
+        replyText += `   📝 Catatan: ${item.catatan_tambahan}\n`;
+      }
+      replyText += `\n`;
+    });
+
+    if (decision.expenses.length > 1) {
+      replyText += `📊 *Total Pengeluaran*: *${formatRupiah(total)}*\n`;
+    }
+
+    if (decision.reply) {
+      replyText += `💬 _${decision.reply}_\n`;
+    }
+
+    await ctx.reply(replyText, { parse_mode: 'Markdown' });
+    conversationManager.addMessage(userId, 'assistant', replyText);
+    return;
+  }
+
+  // 2. INTENT: EDIT_EXPENSE
+  if (decision.intent === 'EDIT_EXPENSE' && decision.edit && decision.edit.rowIndex) {
+    const rowIndex = Number(decision.edit.rowIndex);
+    const existingItem = await sheetsService.getExpenseByRow(rowIndex);
+
+    await sheetsService.updateExpenseRow(rowIndex, {
+      tanggal: decision.edit.tanggal || existingItem.tanggal,
+      waktu: existingItem.waktu,
+      nominal: Number(decision.edit.nominal) || existingItem.nominal,
+      kategori: decision.edit.kategori || existingItem.kategori,
+      keterangan: decision.edit.keterangan || existingItem.keterangan,
+      catatan_tambahan: decision.edit.catatan_tambahan !== undefined ? decision.edit.catatan_tambahan : existingItem.catatan_tambahan,
+      sumber: 'Edit AI',
+      pengirim: userIdentifier,
+    });
+
+    let editReply = decision.reply;
+    if (!editReply) {
+      editReply = `✏️ *Transaksi Baris #${rowIndex} Berhasil Diperbarui!*\n\n` +
+        `• Tanggal: ${decision.edit.tanggal || existingItem.tanggal}\n` +
+        `• Keterangan: ${decision.edit.keterangan || existingItem.keterangan}\n` +
+        `• Nominal: *${formatRupiah(decision.edit.nominal || existingItem.nominal)}*\n` +
+        `• Kategori: ${decision.edit.kategori || existingItem.kategori}`;
+    }
+
+    await ctx.reply(editReply, { parse_mode: 'Markdown' });
+    conversationManager.addMessage(userId, 'assistant', editReply);
+    return;
+  }
+
+  // 3. INTENT: DELETE_EXPENSE
+  if (decision.intent === 'DELETE_EXPENSE' && decision.deleteRowIndex) {
+    const rowIndex = Number(decision.deleteRowIndex);
+    const itemToDelete = await sheetsService.getExpenseByRow(rowIndex);
+    await sheetsService.deleteExpenseRow(rowIndex);
+
+    let delReply = decision.reply;
+    if (!delReply) {
+      delReply = `🗑️ *Transaksi Baris #${rowIndex} Berhasil Dihapus!*\n` +
+        `• ${itemToDelete.keterangan} (${formatRupiah(itemToDelete.nominal)})`;
+    }
+
+    await ctx.reply(delReply, { parse_mode: 'Markdown' });
+    conversationManager.addMessage(userId, 'assistant', delReply);
+    return;
+  }
+
+  // 4. INTENT: CHAT_QUERY (Tanya jawab, diskusi keuangan, analisa, saran)
+  const chatReply = decision.reply || 'Saya telah memahami pesanmu. Ada yang ingin kamu diskusikan lagi seputar keuanganmu?';
+  await ctx.reply(chatReply, { parse_mode: 'Markdown' });
+  conversationManager.addMessage(userId, 'assistant', chatReply);
+}
+
 // Command: /start
 bot.command('start', async (ctx) => {
   const name = ctx.from?.first_name || 'teman';
   const text = `Halo, ${name}! 👋\n` +
-    `Saya adalah bot asisten pencatat & analis pengeluaran keuangan pribadi kamu.\n\n` +
-    `✨ *Cara Cepat Mencatat*:\n` +
-    `1. 💬 *Teks*: \`kopi kenangan 25rb\` atau \`beli bensin 40rb bayar qris\`\n` +
-    `2. 📸 *Foto*: Kirimkan foto struk belanja / bon / QRIS\n` +
-    `3. 🎙️ *Suara*: Kirim voice note pengeluaranmu\n\n` +
-    `📊 *Laporan & Analisa*:\n` +
-    `• /rekap : Menu laporan lengkap dengan tombol interaktif\n` +
-    `• /hari : Laporan pengeluaran hari ini\n` +
-    `• /minggu : Laporan 7 hari terakhir\n` +
-    `• /bulan : Laporan bulan ini\n` +
-    `• /tahun : Laporan tahun ini\n` +
-    `• /analisa : Analisa AI mendalam tentang pola & kesehatan finansial\n\n` +
-    `🛠️ *Kelola Data*:\n` +
-    `• /list : Lihat daftar transaksi terakhir (beserta ID baris)\n` +
-    `• /hapus \`<no>\` : Menghapus baris transaksi tertentu\n` +
-    `• /edit \`<no> <perubahan>\` : Mengedit transaksi dengan bantuan AI\n\n` +
+    `Saya adalah **Finny**, asisten AI & analis keuangan pribadi kamu yang terhubung langsung ke database Google Sheets milikmu.\n\n` +
+    `💬 *Kamu Bisa Tanya Apa Saja*: \n` +
+    `Cukup ajak saya ngobrol seperti teman atau konsultan keuangan:\n` +
+    `• _"Berapa total saya jajan kopi minggu ini?"_\n` +
+    `• _"Kemarin saya makan apa aja ya?"_\n` +
+    `• _"Menurutmu apakah saya boros bulan ini?"_\n` +
+    `• _"Boleh gak saya beli jam tangan 1 juta kalau lihat cashflow saya?"_\n\n` +
+    `✍️ *Mencatat Pengeluaran Sangat Fleksibel*:\n` +
+    `• Ketik santai: \`kopi 25rb\` atau \`beli bensin 40rb bayar qris\`\n` +
+    `• Kirim foto struk belanja / bon\n` +
+    `• Kirim rekaman suara (voice note)\n\n` +
+    `📊 *Laporan Cepat*:\n` +
+    `• /rekap : Dashboard laporan interaktif\n` +
+    `• /analisa : Bedah mendalam kebiasaan belanja & skor finansial\n` +
+    `• /list : Cek 10 transaksi terakhir\n` +
+    `• /reset : Reset memori sesi percakapan\n\n` +
     `Ketik /help untuk panduan lengkap.`;
 
   await ctx.reply(text, { parse_mode: 'Markdown' });
@@ -159,29 +270,33 @@ bot.command('start', async (ctx) => {
 
 // Command: /help
 bot.command('help', async (ctx) => {
-  const text = `📖 *Panduan Lengkap Bot Nyatet*:\n\n` +
-    `1️⃣ *Mencatat Pengeluaran*:\n` +
-    `• Ketik bebas: \`makan siang padang 30k\` atau \`pertamax 50rb bayar bca\`\n` +
-    `• Kirim foto struk belanjaan (Alfamart, Indomaret, resto, dsb)\n` +
-    `• Kirim rekaman suara (voice note)\n\n` +
-    `2️⃣ *Melihat Laporan (Rekap)*:\n` +
-    `• /rekap : Membuka dashboard laporan interaktif\n` +
-    `• /hari : Pengeluaran hari ini\n` +
-    `• /minggu : Pengeluaran 7 hari terakhir\n` +
-    `• /bulan : Pengeluaran bulan ini\n` +
-    `• /tahun : Pengeluaran tahun ini\n\n` +
-    `3️⃣ *Analisa AI Mendalam*:\n` +
-    `• /analisa : Sumopod AI akan membedah pola konsumsi, kebiasaan boros, memberikan rekomendasi finansial praktis, dan skor kesehatan anggaran.\n\n` +
-    `4️⃣ *Edit & Hapus Transaksi*:\n` +
-    `• /list : Menampilkan 10 transaksi terakhir beserta nomor baris \`[#...]\`\n` +
-    `• /hapus \`<no_baris>\` : Menghapus transaksi (contoh: \`/hapus 5\`)\n` +
-    `• /edit \`<no_baris> <instruksi>\` : Mengedit transaksi dengan bahasa santai\n` +
-    `  Contoh:\n` +
-    `  - \`/edit 5 harusnya nominal 35rb\`\n` +
-    `  - \`/edit 5 ganti keterangan makan bakso bayar tunai\`\n\n` +
-    `• /myid : Cek Telegram ID kamu`;
+  const text = `📖 *Panduan Bot AI Keuangan Nyatet*:\n\n` +
+    `🤖 *1. Chatbot Finansial Pintar*:\n` +
+    `Kamu bisa bertanya apa saja seputar keuanganmu tanpa format kaku. AI memiliki akses ke riwayat transaksi dan ringkasan anggaranmu.\n` +
+    `Contoh:\n` +
+    `• _"Berapa sisa pengeluaranku bulan ini?"_\n` +
+    `• _"Kategori apa yang paling boros?"_\n` +
+    `• _"Ubah pengeluaran kopi tadi jadi 28rb ya"_\n` +
+    `• _"Hapus pengeluaran bensin yang tadi pagi"_\n\n` +
+    `🎙️ *2. Voice Note (Suara)*:\n` +
+    `Kirim rekaman suara apa saja! AI akan mendengarkan, mentranskripsinya, lalu mencatat atau menjawab pertanyaanmu.\n\n` +
+    `📸 *3. Foto & Struk*:\n` +
+    `Kirim struk belanja untuk langsung dicatat, atau kirim foto barang dengan pertanyaan (misal: _"kira-kira aman ga beli ini sekarang?"_).\n\n` +
+    `📊 *4. Perintah Tambahan*:\n` +
+    `• /rekap : Laporan harian, 7 hari, bulanan, tahunan\n` +
+    `• /analisa : Analisa mendalam & saran penghematan konkret\n` +
+    `• /list : Daftar transaksi terakhir (dengan ID [#...])\n` +
+    `• /hapus \`<no>\` : Hapus baris transaksi\n` +
+    `• /edit \`<no> <perubahan>\` : Edit baris transaksi\n` +
+    `• /reset : Mulai percakapan baru (bersihkan memori sesi)`;
 
   await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
+// Command: /reset
+bot.command('reset', async (ctx) => {
+  conversationManager.clear(ctx.from?.id);
+  await ctx.reply('🧹 Memori percakapan telah dibersihkan! Kita bisa mulai obrolan baru dari awal.');
 });
 
 // Command: /rekap dan /laporan
@@ -256,8 +371,8 @@ bot.command('list', async (ctx) => {
     });
 
     text += `━━━━━━━━━━━━━━━━━\n`;
-    text += `💡 *Untuk Hapus*: ketik \`/hapus <no_baris>\` (contoh: \`/hapus ${recent[0]?.rowIndex}\`)\n`;
-    text += `💡 *Untuk Edit*: ketik \`/edit <no_baris> <perubahan>\` (contoh: \`/edit ${recent[0]?.rowIndex} ganti nominal jadi 35rb\`)`;
+    text += `💡 *Untuk Hapus*: ketik \`/hapus <no_baris>\` atau minta langsung di chat (misal: *"hapus baris ${recent[0]?.rowIndex}"*)\n`;
+    text += `💡 *Untuk Edit*: ketik \`/edit <no_baris> <perubahan>\` atau minta di chat`;
 
     await ctx.reply(text, { parse_mode: 'Markdown' });
   } catch (error) {
@@ -283,7 +398,6 @@ bot.command('hapus', async (ctx) => {
 
   try {
     await ctx.replyWithChatAction('typing');
-    // Ambil data sebelum dihapus untuk konfirmasi
     const itemToDelete = await sheetsService.getExpenseByRow(rowIndex);
     await sheetsService.deleteExpenseRow(rowIndex);
 
@@ -313,8 +427,7 @@ bot.command('edit', async (ctx) => {
       'Gunakan format: `/edit <nomor_baris> <instruksi perubahan>`\n\n' +
       'Contoh:\n' +
       '• `/edit 5 harusnya nominal 35rb`\n' +
-      '• `/edit 5 ganti keterangan makan bakso bayar tunai`\n' +
-      '• `/edit 5 tanggal 2026-10-25 nominal 50000`\n\n' +
+      '• `/edit 5 ganti keterangan makan bakso bayar tunai`\n\n' +
       '*(Ketik /list untuk melihat nomor baris transaksi)*',
       { parse_mode: 'Markdown' }
     );
@@ -331,30 +444,17 @@ bot.command('edit', async (ctx) => {
     await ctx.replyWithChatAction('typing');
     const existingItem = await sheetsService.getExpenseByRow(rowIndex);
 
-    const statusMsg = await ctx.reply(`✍️ Menganalisis perubahan untuk baris #${rowIndex} dengan Sumopod AI...`);
-    const updatedFields = await sumopodService.parseEditInstruction(existingItem, instruction);
+    const allExpenses = await sheetsService.getAllExpenses();
+    const financialContext = buildFinancialContext(allExpenses);
+    const history = conversationManager.getHistory(ctx.from?.id);
 
-    const userIdentifier = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'User');
-    await sheetsService.updateExpenseRow(rowIndex, {
-      ...updatedFields,
-      waktu: existingItem.waktu,
-      sumber: 'Edit',
-      pengirim: userIdentifier,
+    const decision = await sumopodService.chatWithAgent({
+      userText: `Ubah transaksi baris #${rowIndex} (${existingItem.keterangan}, Rp ${existingItem.nominal}): "${instruction}"`,
+      financialContext,
+      history,
     });
 
-    let reply = `✏️ *Transaksi Berhasil Diperbarui!* (Baris #${rowIndex})\n\n`;
-    reply += `• *Tanggal*: ${updatedFields.tanggal}\n`;
-    reply += `• *Keterangan*: ${updatedFields.keterangan}\n`;
-    reply += `• *Nominal*: *${formatRupiah(updatedFields.nominal)}*`;
-    if (Number(updatedFields.nominal) !== Number(existingItem.nominal)) {
-      reply += ` _(sebelumnya ${formatRupiah(existingItem.nominal)})_`;
-    }
-    reply += `\n• *Kategori*: ${updatedFields.kategori}\n`;
-    if (updatedFields.catatan_tambahan) {
-      reply += `• *Catatan*: ${updatedFields.catatan_tambahan}\n`;
-    }
-
-    await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, reply, { parse_mode: 'Markdown' });
+    await handleAgentDecision(ctx, decision, 'Edit Command', text);
   } catch (error) {
     console.error('Error saat edit transaksi:', error);
     await ctx.reply(`⚠️ Gagal mengedit transaksi baris #${rowIndex}: ${error.message}`);
@@ -371,105 +471,38 @@ bot.command('ping', async (ctx) => {
   await ctx.reply('🏓 Pong! Bot aktif dan siap melayani.');
 });
 
-/**
- * Helper untuk memproses hasil ekstraksi dan menyimpannya ke Google Sheets
- */
-async function handleExpenseResult(ctx, result, inputType) {
-  if (!result || !result.expenses || result.expenses.length === 0) {
-    return ctx.reply(
-      '🤔 Saya tidak menemukan informasi pengeluaran dari pesan tersebut.\n' +
-      'Pastikan ada keterangan barang/jasa dan nominalnya ya (misal: "kopi 25rb").'
-    );
-  }
-
-  const userIdentifier = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'User');
-  const currentTime = getCurrentTimeWIB();
-
-  // Siapkan baris-baris untuk Google Sheets
-  const rowsToAppend = result.expenses.map((item) => [
-    item.tanggal,
-    currentTime,
-    item.nominal,
-    item.kategori || 'Lain-lain',
-    item.keterangan || '-',
-    item.catatan_tambahan || '',
-    inputType,
-    userIdentifier,
-  ]);
-
-  // Simpan ke Google Sheets
-  await sheetsService.appendExpenses(rowsToAppend);
-
-  // Buat pesan balasan yang rapi dan memuaskan
-  let replyText = `✅ *Berhasil Dicatat ke Google Sheet!*\n\n`;
-  let total = 0;
-
-  result.expenses.forEach((item, index) => {
-    total += Number(item.nominal) || 0;
-    replyText += `*${index + 1}. ${item.keterangan}*\n`;
-    replyText += `   💰 Nominal: *${formatRupiah(item.nominal)}*\n`;
-    replyText += `   🏷️ Kategori: ${item.kategori}\n`;
-    replyText += `   📅 Tanggal: ${item.tanggal}\n`;
-    if (item.catatan_tambahan) {
-      replyText += `   📝 Catatan: ${item.catatan_tambahan}\n`;
-    }
-    replyText += `\n`;
-  });
-
-  if (result.expenses.length > 1) {
-    replyText += `📊 *Total Pengeluaran*: *${formatRupiah(total)}*\n`;
-  }
-
-  if (result.ringkasan) {
-    replyText += `💬 _${result.ringkasan}_\n`;
-  }
-
-  await ctx.reply(replyText, { parse_mode: 'Markdown' });
-}
-
-// Handler: Pesan Teks
+// Handler: Pesan Teks (Percakapan Cerdas, Pencatatan, Tanya Jawab, Edit, Hapus)
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
   if (text.startsWith('/')) return;
 
-  const lower = text.toLowerCase();
-
-  // Natural language shortcut: Deteksi jika user bertanya rekap / laporan
-  if (lower === 'rekap' || lower === 'laporan' || lower.startsWith('rekap ') || lower.startsWith('laporan ')) {
-    if (lower.includes('hari')) return sendPeriodReport(ctx, 'hari');
-    if (lower.includes('minggu') || lower.includes('7 hari')) return sendPeriodReport(ctx, 'minggu');
-    if (lower.includes('tahun')) return sendPeriodReport(ctx, 'tahun');
-    return sendPeriodReport(ctx, 'bulan');
-  }
-
-  // Natural language shortcut: Deteksi analisa
-  if (lower.includes('analisa') || lower.includes('analisis')) {
-    if (lower.includes('hari')) return runDeepAnalysis(ctx, 'hari');
-    if (lower.includes('minggu')) return runDeepAnalysis(ctx, 'minggu');
-    if (lower.includes('tahun')) return runDeepAnalysis(ctx, 'tahun');
-    return runDeepAnalysis(ctx, 'bulan');
-  }
-
-  // Natural language shortcut: Deteksi list / daftar transaksi
-  if (lower === 'list' || lower === 'daftar' || lower === 'riwayat pengeluaran') {
-    return ctx.reply('Ketik /list untuk melihat daftar transaksi terakhir.');
-  }
-
   try {
     await ctx.replyWithChatAction('typing');
-    const result = await sumopodService.parseText(text);
-    await handleExpenseResult(ctx, result, 'Teks');
+
+    // Ambil data Google Sheets terbaru untuk konteks RAG
+    const allExpenses = await sheetsService.getAllExpenses();
+    const financialContext = buildFinancialContext(allExpenses);
+    const history = conversationManager.getHistory(ctx.from?.id);
+
+    // Kirim pesan ke Agent AI
+    const decision = await sumopodService.chatWithAgent({
+      userText: text,
+      financialContext,
+      history,
+    });
+
+    await handleAgentDecision(ctx, decision, 'Teks', text);
   } catch (error) {
-    console.error('Error saat memproses teks:', error);
-    await ctx.reply(`⚠️ Terjadi kesalahan saat memproses data: ${error.message}`);
+    console.error('Error saat memproses pesan teks:', error);
+    await ctx.reply(`⚠️ Terjadi kesalahan saat memproses pesan: ${error.message}`);
   }
 });
 
-// Handler: Foto (Struk / Bon)
+// Handler: Foto (Struk / Bukti Bayar / Foto Barang & Tanya Jawab)
 bot.on('message:photo', async (ctx) => {
   try {
     await ctx.replyWithChatAction('typing');
-    await ctx.reply('🔎 Menganalisis struk/bukti bayar dengan Sumopod AI...');
+    await ctx.reply('🔎 Membaca dan menganalisis gambar dengan Sumopod AI...');
 
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const file = await ctx.api.getFile(photo.file_id);
@@ -480,20 +513,32 @@ bot.on('message:photo', async (ctx) => {
     const base64Data = Buffer.from(arrayBuffer).toString('base64');
 
     const caption = ctx.message.caption || '';
-    const result = await sumopodService.parseImage(base64Data, 'image/jpeg', caption);
 
-    await handleExpenseResult(ctx, result, 'Foto Struk');
+    // Ambil konteks finansial terkini
+    const allExpenses = await sheetsService.getAllExpenses();
+    const financialContext = buildFinancialContext(allExpenses);
+    const history = conversationManager.getHistory(ctx.from?.id);
+
+    const decision = await sumopodService.chatWithImage({
+      base64Data,
+      mimeType: 'image/jpeg',
+      caption,
+      financialContext,
+      history,
+    });
+
+    await handleAgentDecision(ctx, decision, 'Foto', caption || '[Kirim Foto]');
   } catch (error) {
-    console.error('Error saat memproses foto struk:', error);
-    await ctx.reply(`⚠️ Gagal menganalisis struk: ${error.message}`);
+    console.error('Error saat memproses foto:', error);
+    await ctx.reply(`⚠️ Gagal menganalisis gambar: ${error.message}`);
   }
 });
 
-// Handler: Voice Note
+// Handler: Voice Note / Audio (Mendengarkan, Mentranskripsi, dan Berkomunikasi)
 bot.on(['message:voice', 'message:audio'], async (ctx) => {
   try {
     await ctx.replyWithChatAction('record_voice');
-    await ctx.reply('🎧 Mendengarkan dan mencatat voice note...');
+    const waitMsg = await ctx.reply('🎧 _Mendengarkan voice note kamu..._', { parse_mode: 'Markdown' });
 
     const audioObj = ctx.message.voice || ctx.message.audio;
     const mimeType = audioObj.mime_type || 'audio/ogg';
@@ -504,9 +549,37 @@ bot.on(['message:voice', 'message:audio'], async (ctx) => {
     const arrayBuffer = await response.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString('base64');
 
-    const result = await sumopodService.parseAudio(base64Data, mimeType);
+    // 1. Transkripsi suara dengan Whisper
+    const transcript = await sumopodService.transcribeAudio(base64Data, mimeType);
 
-    await handleExpenseResult(ctx, result, 'Voice Note');
+    if (!transcript || transcript.trim().length === 0) {
+      return ctx.api.editMessageText(
+        ctx.chat.id,
+        waitMsg.message_id,
+        '⚠️ Suara pada voice note tidak terdengar jelas. Coba kirimkan kembali atau gunakan pesan teks ya.'
+      );
+    }
+
+    // Tampilkan transkrip kepada user agar user tahu suara terdengar akurat
+    await ctx.api.editMessageText(
+      ctx.chat.id,
+      waitMsg.message_id,
+      `🎙️ *Kamu berkata*: _"${transcript}"_\n_Sedang diproses..._`,
+      { parse_mode: 'Markdown' }
+    );
+
+    // 2. Kirim transkrip ke AI Agent bersama konteks data keuangan
+    const allExpenses = await sheetsService.getAllExpenses();
+    const financialContext = buildFinancialContext(allExpenses);
+    const history = conversationManager.getHistory(ctx.from?.id);
+
+    const decision = await sumopodService.chatWithAgent({
+      userText: transcript,
+      financialContext,
+      history,
+    });
+
+    await handleAgentDecision(ctx, decision, 'Voice Note', transcript);
   } catch (error) {
     console.error('Error saat memproses voice note:', error);
     await ctx.reply(`⚠️ Gagal memproses voice note: ${error.message}`);

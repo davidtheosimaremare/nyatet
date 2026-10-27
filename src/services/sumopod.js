@@ -21,46 +21,73 @@ export class SumopodService {
     return this.client;
   }
 
-  _getSystemInstruction(currentDate) {
-    return `Kamu adalah asisten pencatat keuangan pribadi dalam Bahasa Indonesia.
-Tugasmu adalah menganalisis input pengeluaran berupa teks, gambar struk belanja / faktur / QRIS, atau transkrip suara dalam bahasa Indonesia atau bahasa sehari-hari.
+  /**
+   * System instruction lengkap untuk AI Financial Chatbot & Accountant
+   */
+  _getAgentSystemInstruction(financialContext, currentDate) {
+    return `Kamu adalah Finny, asisten AI keuangan pribadi dan akuntan cerdas (Certified Personal Financial Planner) yang ramah, santun, objektif, dan suportif.
+Kamu berbicara dalam Bahasa Indonesia yang santai, alami, dan solutif.
+Kamu memiliki akses langsung ke seluruh data keuangan pengguna yang tersimpan di Google Sheets.
 
-Format Kategori Utama:
-- Makanan & Minuman
-- Belanja Kebutuhan
-- Transportasi
-- Tagihan & Utilitas
-- Hiburan & Liburan
-- Kesehatan
-- Lain-lain
+Konteks Waktu Saat Ini:
+- Tanggal: ${currentDate} (WIB)
 
-Aturan Ekstraksi:
-1. Tanggal: Gunakan format YYYY-MM-DD. Jika tidak disebutkan secara eksplisit, gunakan tanggal default hari ini: ${currentDate}. Jika di struk fisik ada tanggal struk yang jelas, gunakan tanggal dari struk tersebut.
-2. Nominal: Nilai uang dalam Rupiah harus berupa angka bulat positif (tanpa titik/koma/simbol Rp). Contoh: "kopi 25rb" -> 25000, "bensin 40k" -> 40000.
-3. Keterangan: Deskripsi singkat dan jelas apa yang dibeli.
-4. Catatan Tambahan: Jika tertera metode pembayaran (cth: QRIS, BCA, Tunai) atau catatan lain, masukkan di sini.
-5. Jika pesan bukan pengeluaran sama sekali (hanya menyapa 'halo', pertanyaan, dsb), kembalikan array 'expenses' yang KOSONG [].
-6. Jika pada struk atau pesan terdapat beberapa transaksi pengeluaran berbeda, ekstrak semuanya ke dalam daftar expenses.
+${financialContext || '(Belum ada data transaksi yang tercatat)'}
 
-WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti berikut:
+PERAN DAN INSTRUKSI INTENT:
+Kenali maksud pesan pengguna dan tentukan satu 'intent' yang paling tepat:
+
+1. RECORD_EXPENSE (Mencatat Pengeluaran Baru):
+   - Jika pengguna menyebutkan pengeluaran baru (misal: "kopi 25rb", "tadi siang beli nasi padang 30k", "isi bensin pertamax 50rb bayar qris", atau kiriman struk belanja).
+   - Ekstrak seluruh item ke dalam array 'expenses':
+     * tanggal: YYYY-MM-DD (ambil tanggal struk jika ada, atau gunakan default hari ini: ${currentDate})
+     * nominal: angka bulat positif dalam Rupiah (tanpa titik/koma/Rp)
+     * kategori: pilih salah satu dari [Makanan & Minuman, Belanja Kebutuhan, Transportasi, Tagihan & Utilitas, Hiburan & Liburan, Kesehatan, Lain-lain]
+     * keterangan: nama barang/jasa yang dibeli
+     * catatan_tambahan: metode pembayaran (QRIS, BCA, Tunai, dsb) atau catatan lainnya
+   - Buat konfirmasi ramah di 'reply' yang menyapa dan merangkum apa yang baru dicatat.
+
+2. EDIT_EXPENSE (Mengubah / Mengoreksi Transaksi):
+   - Jika pengguna ingin mengubah transaksi yang sudah tercatat sebelumnya (misal: "kopi tadi ubah jadi 30rb", "yang kemarin makan siang ganti nominal 45rb bayar bca", "edit baris 15 nominal 40rb").
+   - Cari baris transaksi terkait di DAFTAR TRANSAKSI di atas.
+   - Set 'edit': {
+       "rowIndex": <nomor_baris_dari_daftar>,
+       "tanggal": "YYYY-MM-DD",
+       "nominal": number,
+       "kategori": string,
+       "keterangan": string,
+       "catatan_tambahan": string
+     }
+   - Berikan konfirmasi perubahan yang jelas di 'reply'.
+
+3. DELETE_EXPENSE (Menghapus Transaksi):
+   - Jika pengguna minta menghapus transaksi (misal: "hapus transaksi kopi yang tadi", "hapus baris 8", "batalkan pengeluaran bensin tadi").
+   - Cari nomor baris transaksi yang dimaksud di DAFTAR TRANSAKSI di atas.
+   - Set 'deleteRowIndex': <nomor_baris>.
+   - Berikan konfirmasi di 'reply'.
+
+4. CHAT_QUERY (Tanya Jawab Keuangan, Saran, Rekap, atau Analisa):
+   - Jika pengguna bertanya tentang data keuangannya, berdiskusi, meminta saran/pertimbangan finansial, atau sekadar mengobrol:
+     * Contoh: "Berapa total yang saya keluarin buat kopi bulan ini?", "Apakah saya boros minggu ini?", "Kemarin saya makan apa aja ya?", "Boleh gak saya beli smartwatch 2 juta kalau lihat cashflow saya?", "Berapa sisa pengeluaran saya bulan ini?", "Kategori apa yang paling banyak nyedot uang?"
+   - Gunakan data keuangan di atas untuk menjawab secara akurat, faktual, mendalam, dan bersahabat.
+   - Sebutkan angka-angka riil, persentase, dan perbandingan konkret dari data pengguna.
+   - Berikan saran finansial yang cerdas dan realistis.
+   - 'expenses': [], 'edit': null, 'deleteRowIndex': null.
+
+FORMAT OUTPUT WAJIB:
+Balas HANYA dengan JSON valid persis dengan struktur berikut:
 {
-  "expenses": [
-    {
-      "tanggal": "YYYY-MM-DD",
-      "nominal": 25000,
-      "kategori": "Makanan & Minuman",
-      "keterangan": "Kopi kenangan",
-      "catatan_tambahan": "QRIS"
-    }
-  ],
-  "ringkasan": "Pesan konfirmasi singkat dan ramah"
+  "intent": "RECORD_EXPENSE" | "EDIT_EXPENSE" | "DELETE_EXPENSE" | "CHAT_QUERY",
+  "expenses": [ ... ],
+  "edit": null,
+  "deleteRowIndex": null,
+  "reply": "Pesan jawaban ramah, cerdas, dan lengkap untuk user dalam format Markdown Telegram (gunakan *tebal* dan _miring_)"
 }`;
   }
 
   _cleanAndParseJson(rawText) {
-    if (!rawText) return { expenses: [] };
+    if (!rawText) return { intent: 'CHAT_QUERY', expenses: [], reply: '' };
     let clean = rawText.trim();
-    // Hapus code block markdown jika ada (```json ... ```)
     if (clean.startsWith('```')) {
       clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     }
@@ -68,29 +95,40 @@ WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti beriku
       return JSON.parse(clean.trim());
     } catch (err) {
       console.error('Gagal parse JSON dari Sumopod:', clean);
-      throw new Error(`Format respons model tidak valid JSON: ${err.message}`);
+      // Fallback jika model menjawab dalam bentuk teks polos
+      return {
+        intent: 'CHAT_QUERY',
+        expenses: [],
+        reply: rawText,
+      };
     }
   }
 
   /**
-   * Parse pengeluaran dari teks
+   * Chatting interaktif dengan AI yang memahami seluruh data keuangan pengguna
+   * @param {Object} params
+   * @param {string} params.userText
+   * @param {string} params.financialContext
+   * @param {Array} params.history
    */
-  async parseText(text) {
+  async chatWithAgent({ userText, financialContext = '', history = [] }) {
     const currentDate = getCurrentDateWIB();
+    const systemPrompt = this._getAgentSystemInstruction(financialContext, currentDate);
+
+    const formattedHistory = (history || []).slice(-6).map((msg) => ({
+      role: msg.role === 'assistant' ? 'assistant' : 'user',
+      content: msg.content,
+    }));
+
     const response = await this.getClient().chat.completions.create({
       model: this.modelName,
       messages: [
-        {
-          role: 'system',
-          content: this._getSystemInstruction(currentDate),
-        },
-        {
-          role: 'user',
-          content: `Analisis pengeluaran dari teks berikut:\n"${text}"`,
-        },
+        { role: 'system', content: systemPrompt },
+        ...formattedHistory,
+        { role: 'user', content: userText },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.1,
+      temperature: 0.2,
     });
 
     const content = response.choices?.[0]?.message?.content || '{}';
@@ -98,28 +136,36 @@ WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti beriku
   }
 
   /**
-   * Parse pengeluaran dari gambar (struk / bon / bukti bayar)
-   * @param {string} base64Data
-   * @param {string} mimeType
-   * @param {string} [caption]
+   * Analisis multimodal gambar (struk / bon / foto barang dengan pertanyaan keuangan)
+   * @param {Object} params
+   * @param {string} params.base64Data
+   * @param {string} params.mimeType
+   * @param {string} params.caption
+   * @param {string} params.financialContext
+   * @param {Array} params.history
    */
-  async parseImage(base64Data, mimeType = 'image/jpeg', caption = '') {
+  async chatWithImage({ base64Data, mimeType = 'image/jpeg', caption = '', financialContext = '', history = [] }) {
     const currentDate = getCurrentDateWIB();
-    const promptText = caption
-      ? `Analisis struk/bukti bayar ini. Keterangan tambahan dari user: "${caption}"`
-      : 'Analisis struk/bukti bayar ini dan ekstrak total belanjaan atau item pengeluaran.';
+    const systemPrompt = this._getAgentSystemInstruction(financialContext, currentDate);
+
+    const userPrompt = caption
+      ? `Pengguna mengirimkan gambar dengan pesan/caption: "${caption}"\nAnalisis gambar ini. Jika ini struk pengeluaran, ekstrak itemnya (intent: RECORD_EXPENSE). Jika ini foto barang/makanan yang disertai pertanyaan atau diskusi keuangan, jawab secara cerdas dengan memanfaatkan konteks keuangan pengguna (intent: CHAT_QUERY).`
+      : 'Pengguna mengirim foto struk/bukti bayar. Analisis dan ekstrak item pengeluaran ke dalam array expenses (intent: RECORD_EXPENSE).';
+
+    const formattedHistory = (history || []).slice(-4).map((msg) => ({
+      role: msg.role === 'assistant' ? 'assistant' : 'user',
+      content: msg.content,
+    }));
 
     const response = await this.getClient().chat.completions.create({
       model: this.modelName,
       messages: [
-        {
-          role: 'system',
-          content: this._getSystemInstruction(currentDate),
-        },
+        { role: 'system', content: systemPrompt },
+        ...formattedHistory,
         {
           role: 'user',
           content: [
-            { type: 'text', text: promptText },
+            { type: 'text', text: userPrompt },
             {
               type: 'image_url',
               image_url: {
@@ -130,7 +176,7 @@ WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti beriku
         },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.1,
+      temperature: 0.2,
     });
 
     const content = response.choices?.[0]?.message?.content || '{}';
@@ -138,31 +184,26 @@ WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti beriku
   }
 
   /**
-   * Parse pengeluaran dari file audio / voice note
+   * Transkripsi audio / voice note menggunakan model Whisper
    * @param {string} base64Data
    * @param {string} mimeType
+   * @returns {Promise<string>}
    */
-  async parseAudio(base64Data, mimeType = 'audio/ogg') {
+  async transcribeAudio(base64Data, mimeType = 'audio/ogg') {
     try {
       const buffer = Buffer.from(base64Data, 'base64');
       const file = await toFile(buffer, 'voice.ogg', { type: mimeType });
 
-      // Coba transkripsi dengan model whisper di Sumopod
       const transcription = await this.getClient().audio.transcriptions.create({
         file,
         model: 'whisper-1',
       });
 
-      if (!transcription || !transcription.text) {
-        throw new Error('Hasil transkripsi audio kosong');
-      }
-
-      // Analisis teks hasil transkripsi
-      return await this.parseText(transcription.text);
+      return transcription?.text || '';
     } catch (error) {
-      console.error('Error saat proses audio di Sumopod:', error.message);
+      console.error('Error saat transkripsi audio di Sumopod:', error.message);
       throw new Error(
-        `Gagal memproses voice note: ${error.message}. (Catatan: Pastikan model Whisper aktif di Sumopod jika ingin menggunakan fitur voice note, atau gunakan pesan teks/foto struk).`
+        `Gagal mentranskripsi suara: ${error.message}. Pastikan model Whisper tersedia di Sumopod atau gunakan pesan teks/foto struk.`
       );
     }
   }
@@ -179,9 +220,8 @@ WAJIB respon HANYA dalam format JSON valid dengan struktur persis seperti beriku
       return 'Belum ada data transaksi yang cukup untuk dilakukan analisa.';
     }
 
-    // Ambil sampel transaksi representatif (maksimal 25 transaksi untuk hemat token dan fokus)
     const transactionSummary = expenses.slice(-25).map(e => 
-      `- ${e.tanggal}: ${e.keterangan} (${e.kategori}) = Rp ${e.nominal} [${e.catatan_tambahan || '-'}]`
+      `- ${e.tanggal}: ${e.keterangan} (${e.kategori}) = Rp ${e.nominal.toLocaleString('id-ID')} [${e.catatan_tambahan || '-'}]`
     ).join('\n');
 
     const categoryBreakdown = stats.categories.map(c => 
@@ -230,61 +270,28 @@ Gunakan nada bicara profesional, ramah, jujur, dan membangun. Hindari basa-basi 
   }
 
   /**
-   * Membantu memetakan instruksi edit dari user ke data pengeluaran yang sudah ada
-   * @param {Object} existingExpense 
-   * @param {string} instruction 
-   * @returns {Promise<Object>}
+   * Helper parsing teks biasa (backward compatibility)
    */
-  async parseEditInstruction(existingExpense, instruction) {
-    const prompt = `Data transaksi saat ini:
-- Tanggal: ${existingExpense.tanggal}
-- Nominal: ${existingExpense.nominal}
-- Kategori: ${existingExpense.kategori}
-- Keterangan: ${existingExpense.keterangan}
-- Catatan Tambahan: ${existingExpense.catatan_tambahan || '-'}
+  async parseText(text, financialContext = '') {
+    return this.chatWithAgent({ userText: text, financialContext });
+  }
 
-Instruksi perubahan dari user:
-"${instruction}"
+  /**
+   * Helper parsing gambar (backward compatibility)
+   */
+  async parseImage(base64Data, mimeType = 'image/jpeg', caption = '', financialContext = '') {
+    return this.chatWithImage({ base64Data, mimeType, caption, financialContext });
+  }
 
-Perbarui data transaksi di atas sesuai instruksi user.
-Jika ada field yang tidak disebutkan di instruksi, PERTAHANKAN nilai aslinya dari data transaksi saat ini.
-Pastikan nominal berupa angka bulat (contoh: 30000).
-
-Kembalikan HANYA format JSON valid dengan struktur:
-{
-  "tanggal": "YYYY-MM-DD",
-  "nominal": 30000,
-  "kategori": "Kategori",
-  "keterangan": "Keterangan",
-  "catatan_tambahan": "Catatan"
-}`;
-
-    const response = await this.getClient().chat.completions.create({
-      model: this.modelName,
-      messages: [
-        {
-          role: 'system',
-          content: 'Kamu adalah asisten pengedit data transaksi pengeluaran. Balas HANYA dengan JSON valid.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-    });
-
-    const content = response.choices?.[0]?.message?.content || '{}';
-    const parsed = this._cleanAndParseJson(content);
-
-    return {
-      tanggal: parsed.tanggal || existingExpense.tanggal,
-      nominal: Number(parsed.nominal) || existingExpense.nominal,
-      kategori: parsed.kategori || existingExpense.kategori,
-      keterangan: parsed.keterangan || existingExpense.keterangan,
-      catatan_tambahan: parsed.catatan_tambahan !== undefined ? parsed.catatan_tambahan : existingExpense.catatan_tambahan,
-    };
+  /**
+   * Helper parsing audio (backward compatibility)
+   */
+  async parseAudio(base64Data, mimeType = 'audio/ogg', financialContext = '') {
+    const text = await this.transcribeAudio(base64Data, mimeType);
+    if (!text) {
+      throw new Error('Hasil rekaman suara tidak terdengar jelas atau kosong.');
+    }
+    return this.chatWithAgent({ userText: text, financialContext });
   }
 }
 

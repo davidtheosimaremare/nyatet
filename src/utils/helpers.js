@@ -210,3 +210,85 @@ export function formatReportText(periodName, stats) {
 
   return text;
 }
+
+/**
+ * Membangun ringkasan konteks data keuangan dari Google Sheets untuk dimasukkan ke AI prompt
+ * @param {Array<Object>} allExpenses 
+ * @returns {string}
+ */
+export function buildFinancialContext(allExpenses = []) {
+  const today = getCurrentDateWIB();
+  const currentTime = getCurrentTimeWIB();
+
+  const todayData = filterExpensesByPeriod(allExpenses, 'hari');
+  const todayStats = calculateExpenseStats(todayData.data);
+
+  const weekData = filterExpensesByPeriod(allExpenses, 'minggu');
+  const weekStats = calculateExpenseStats(weekData.data);
+
+  const monthData = filterExpensesByPeriod(allExpenses, 'bulan');
+  const monthStats = calculateExpenseStats(monthData.data);
+
+  const yearData = filterExpensesByPeriod(allExpenses, 'tahun');
+  const yearStats = calculateExpenseStats(yearData.data);
+
+  let context = `=== DATA KEUANGAN PENGGUNA TERKINI (GOOGLE SHEETS) ===\n`;
+  context += `📅 Tanggal Hari Ini: ${today} (${formatDateIndo(today)}) | Waktu Sekarang: ${currentTime} WIB\n\n`;
+
+  context += `💰 RINGKASAN:\n`;
+  context += `- Pengeluaran Hari Ini: ${formatRupiah(todayStats.total)} (${todayStats.count} transaksi)\n`;
+  context += `- Pengeluaran 7 Hari Terakhir: ${formatRupiah(weekStats.total)} (${weekStats.count} transaksi)\n`;
+  context += `- Pengeluaran Bulan Ini: ${formatRupiah(monthStats.total)} (${monthStats.count} transaksi, rata-rata ${formatRupiah(monthStats.average)}/trx)\n`;
+  if (monthStats.categories.length > 0) {
+    context += `  Distribusi Kategori Bulan Ini:\n`;
+    monthStats.categories.forEach(c => {
+      context += `  * ${c.name}: ${formatRupiah(c.nominal)} (${c.percentage}%, ${c.count}x)\n`;
+    });
+  }
+  context += `- Pengeluaran Tahun Ini: ${formatRupiah(yearStats.total)} (${yearStats.count} transaksi)\n\n`;
+
+  // Ambil hingga 40 transaksi paling baru (urutkan dari yang paling baru)
+  const recentExpenses = allExpenses.slice(-40).reverse();
+  context += `📋 DAFTAR ${recentExpenses.length} TRANSAKSI TERAKHIR (Gunakan nomor baris [#...] untuk referensi edit/hapus):\n`;
+  if (recentExpenses.length === 0) {
+    context += `(Belum ada transaksi tersimpan)\n`;
+  } else {
+    recentExpenses.forEach(e => {
+      context += `[#${e.rowIndex}] ${e.tanggal} ${e.waktu || ''} | ${formatRupiah(e.nominal)} | Kategori: ${e.kategori} | Ket: ${e.keterangan}${e.catatan_tambahan ? ` | Catatan: ${e.catatan_tambahan}` : ''}\n`;
+    });
+  }
+
+  return context;
+}
+
+/**
+ * Pengelola riwayat percakapan memori per user
+ */
+export class ConversationManager {
+  constructor(maxTurns = 10) {
+    this.sessions = new Map();
+    this.maxTurns = maxTurns;
+  }
+
+  getHistory(userId) {
+    return this.sessions.get(String(userId)) || [];
+  }
+
+  addMessage(userId, role, content) {
+    const id = String(userId);
+    const msgs = this.getHistory(id);
+    msgs.push({ role, content });
+    // Jaga agar panjang percakapan tidak melebihi batas turns
+    if (msgs.length > this.maxTurns * 2) {
+      msgs.splice(0, msgs.length - this.maxTurns * 2);
+    }
+    this.sessions.set(id, msgs);
+  }
+
+  clear(userId) {
+    this.sessions.delete(String(userId));
+  }
+}
+
+export const conversationManager = new ConversationManager(10);
+
